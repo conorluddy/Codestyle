@@ -1,3 +1,5 @@
+(See CLAUDE.md for sharper context-saving alternative)
+
 # Code Style Guide
 
 > **Core Principle**: Context is finite. Every token — code, comment, structure — competes for limited attention. Maximize signal, minimize noise. Write for two audiences: humans with limited working memory and AI agents with bounded context windows.
