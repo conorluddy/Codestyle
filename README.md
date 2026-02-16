@@ -6,7 +6,7 @@
 
 The optimal code is the minimum necessary to solve the problem correctly. Every additional line is debt.
 
-**Progressive Disclosure**: Structure code layer-by-layer. Readers grasp high-level flow immediately, drilling into details only when needed. File names indicate purpose. Directory structures mirror conceptual hierarchies. Function names describe behavior without reading implementation.
+**Progressive Disclosure**: Structure code layer-by-layer. Readers grasp high-level flow immediately, drilling into details only when needed. File names indicate purpose. Directory structures mirror conceptual hierarchies. Function names describe behavior without reading implementation. See [Progressive Disclosure](#progressive-disclosure) for concrete patterns.
 
 **Self-Documenting**: Names eliminate need for comments. Comments explain "why," never "what." If you chose algorithm A over B for subtle reasons, state that. If you're working around a library bug, explain it.
 
@@ -14,11 +14,145 @@ The optimal code is the minimum necessary to solve the problem correctly. Every 
 
 **AHA Over DRY**: Avoid Hasty Abstractions. Wait for the 3rd duplication before extracting. The wrong abstraction is worse than duplication. Three similar lines of code is better than a premature abstraction.
 
+## Progressive Disclosure
+
+Structure every layer of your system so readers — human or agent — get the right level of detail at the right time. No one should need to read 2000 lines to understand what a module does.
+
+### The Zoom Principle
+
+Code should work like a map: zoom out for the big picture, zoom in for street-level detail. Each zoom level should be self-sufficient.
+
+```
+// Level 0: Directory structure tells you what exists
+src/
+├── authentication/     # "There's an auth system"
+├── orders/             # "There's an order system"  
+├── payments/           # "There's a payment system"
+└── README.md           # How they connect
+
+// Level 1: Index file tells you what it can do
+// authentication/index.ts
+export { authenticateUser } from './authenticate';
+export { refreshSession } from './sessions';
+export { revokeAccess } from './revoke';
+// No implementation visible — just capabilities
+
+// Level 2: Function signature tells you the contract
+async function authenticateUser(
+  credentials: UserCredentials,
+  db: Database,
+  clock: Clock
+): Promise<Result<AuthSession, AuthError>>
+
+// Level 3: Implementation tells you how
+// Only read this when you need to change the behaviour
+```
+
+### File-Level Disclosure
+
+Every file should answer "what is this?" in its first 10 lines. Implementation details belong below.
+
+```typescript
+// ✅ Top of file reveals purpose, contract, and shape
+/**
+ * Order Processing Pipeline
+ * 
+ * Validates → enriches → prices → submits orders.
+ * Entry point: processOrder()
+ * Error strategy: Result types, no throws
+ */
+
+// Types first — the contract
+type ProcessOrderInput = { /* ... */ };
+type ProcessOrderResult = Result<Receipt, ProcessError>;
+
+// Public API second
+export async function processOrder(input: ProcessOrderInput): Promise<ProcessOrderResult> {
+  const validated = validateOrder(input);
+  if (!validated.ok) return validated;
+  
+  const enriched = await enrichWithInventory(validated.value);
+  if (!enriched.ok) return enriched;
+  
+  return submitOrder(enriched.value);
+}
+
+// Private helpers last — only read if you need to understand a specific step
+function validateOrder(input: ProcessOrderInput): Result<ValidatedOrder, ProcessError> {
+  // ...
+}
+```
+
+```typescript
+// ❌ Implementation soup — must read everything to understand anything
+import { db } from '../globals';
+const RETRY_COUNT = 3;
+const BACKOFF_MS = 100;
+
+function helper1() { /* ... */ }
+function helper2() { /* ... */ }
+// 200 lines later...
+export function processOrder() { /* ... */ }
+```
+
+### Documentation Disclosure
+
+Match documentation depth to the reader's likely intent. Most readers want "what does this do?" — very few want "why did you choose bcrypt over argon2?"
+
+```
+Level 1 — CLAUDE.md (5 seconds)
+  "This is an order processing API. Entry: src/api/server.ts"
+
+Level 2 — Module README (30 seconds)  
+  "Orders go through validate → enrich → price → submit. 
+   Uses Result types. Retries on transient failures."
+
+Level 3 — Section comments (2 minutes)
+  // ========================================
+  // PRICING ENGINE
+  // ========================================
+  // Applies tiered discounts, tax rules, and currency conversion.
+  // See: docs/pricing-model.md for business rules.
+
+Level 4 — Inline "why" comments (as needed)
+  // Using ceiling division here because partial units 
+  // must be billed as full units per the SLA.
+```
+
+### API & Type Disclosure
+
+Public interfaces should be scannable summaries. Implementation types stay internal.
+
+```typescript
+// ✅ Public types: minimal, focused, scannable
+// orders/types.ts — what consumers need to know
+export type OrderSummary = {
+  id: OrderId;
+  status: OrderStatus;
+  total: Money;
+  itemCount: number;
+  createdAt: DateTime;
+};
+
+// orders/internal-types.ts — implementation detail
+// Not exported. Contains pricing breakdowns, audit trails,
+// intermediate computation states, retry metadata, etc.
+type OrderPricingContext = { /* ... */ };
+type OrderAuditEntry = { /* ... */ };
+```
+
+### Disclosure Anti-Patterns
+
+- **Premature depth**: Putting implementation details in README files
+- **Flat disclosure**: 500-line files with no visual hierarchy or grouping
+- **Inverted disclosure**: Helpers at top, public API buried at bottom
+- **Missing levels**: Jumping from directory listing straight to inline comments with nothing in between
+
 ## Naming
 
 The #1 impact on readability. Good names eliminate mental translation overhead.
 
-```typescript
+```
 // ✅ Descriptive, unambiguous
 async function validateJsonAgainstSchema(
   schema: ZodSchema,
@@ -36,6 +170,7 @@ function calcBackoff(n: number, d: number): number
 ```
 
 **Rules**:
+
 1. **Be specific**: `activeUsers` not `users`, `httpTimeoutMs` not `timeout`
 2. **Include units**: `delayMs` not `delay`, `maxRetries` not `max`
 3. **Avoid abbreviations**: `customer` not `cust`, `configuration` not `cfg`
@@ -47,7 +182,7 @@ function calcBackoff(n: number, d: number): number
 
 ### Single Responsibility with Explicit Contracts
 
-```typescript
+```
 // ✅ Self-contained, explicit dependencies, typed contract
 async function authenticateUser(
   credentials: UserCredentials,
@@ -68,7 +203,7 @@ async function auth(data: any): Promise<any> {
 
 Handle edge cases first, keep the happy path unindented and visible.
 
-```typescript
+```
 // ✅ Guard clauses — happy path clear
 function processOrder(order: Order): Result<Receipt, ProcessError> {
   if (!order) return err('missing_order');
@@ -105,7 +240,7 @@ function processOrder(order: Order) {
 
 Errors belong in function signatures, not hidden behind `throw`.
 
-```typescript
+```
 type Result<T, E> =
   | { ok: true; value: T }
   | { ok: false; error: E };
@@ -132,7 +267,7 @@ if (!result.ok) {
 
 ### Branded Types — Validate at Boundaries
 
-```typescript
+```
 type ValidatedEmail = string & { readonly __brand: 'ValidatedEmail' };
 type UserId = string & { readonly __brand: 'UserId' };
 
@@ -154,7 +289,7 @@ Once you have a `ValidatedEmail`, downstream functions carry zero validation ove
 2. **Fail fast at boundaries** — validate inputs immediately, not deep in call stack
 3. **Provide actionable messages** — what failed, expected vs actual, how to fix
 
-```typescript
+```
 // ✅ Actionable error with context
 throw new ValidationError(
   `Email validation failed for "user_email": ` +
@@ -170,7 +305,7 @@ throw new Error("Validation failed");
 
 ### Structure with Clear Boundaries
 
-```typescript
+```
 // ========================================
 // PUBLIC API
 // ========================================
@@ -235,7 +370,7 @@ project/
 
 Test names describe scenarios. Docstrings explain "why." Tests demonstrate usage.
 
-```typescript
+```
 test('should reject invalid credentials without revealing if username exists', async () => {
   // Prevents username enumeration attacks
   const auth = new Authenticator(database);
@@ -263,7 +398,7 @@ test('should reject invalid credentials without revealing if username exists', a
 
 ### Structured Logging
 
-```typescript
+```
 // ✅ Structured — queryable, correlated
 logger.info('Request processed', {
   request_id: requestId,
@@ -281,13 +416,14 @@ logger.info(`User ${userId} accessed ${req.path}`);
 
 ### What to Log
 
-**Always include**: request_id, user_id, trace_id, entity IDs, operation type, duration_ms, error details.
+**Always include**: request\_id, user\_id, trace\_id, entity IDs, operation type, duration\_ms, error details.
 
 **Log at critical boundaries**:
-- External API calls (request/response)
-- Database operations (query, duration)
-- Authentication/authorization decisions
-- Error occurrences with full context
+
+* External API calls (request/response)
+* Database operations (query, duration)
+* Authentication/authorization decisions
+* Error occurrences with full context
 
 **One structured event per operation** — derive metrics, logs, or traces from the same data. Don't instrument separately for each observability pillar.
 
@@ -299,7 +435,7 @@ These patterns address the unique demands of code that will be read, modified, a
 
 Agents retry. Network calls fail. Tasks get re-run. Design every mutation to be safely repeatable.
 
-```typescript
+```
 // ✅ Idempotent — safe to retry
 async function ensureUserExists(
   email: ValidatedEmail,
@@ -320,7 +456,7 @@ async function createUser(email: string, db: Database): Promise<User> {
 
 When operations have distinct phases, model them explicitly. Agents reason about state machines far better than implicit status flags scattered across objects.
 
-```typescript
+```
 type OrderState =
   | { status: 'draft'; items: Item[] }
   | { status: 'submitted'; items: Item[]; submittedAt: DateTime }
@@ -337,7 +473,7 @@ function submitOrder(order: OrderState & { status: 'draft' }): OrderState & { st
 
 Agents need structured errors alongside human-readable ones. Return error codes that can be programmatically matched, with messages that explain context.
 
-```typescript
+```
 type AppError = {
   code: 'VALIDATION_FAILED' | 'NOT_FOUND' | 'CONFLICT' | 'UPSTREAM_TIMEOUT';
   message: string;        // Human-readable explanation
@@ -350,7 +486,7 @@ type AppError = {
 
 Structure work so each change can be validated in isolation. This applies to commits, PRs, and function design. An agent (or reviewer) should be able to verify correctness without understanding the entire system.
 
-```typescript
+```
 // ✅ Each function is independently testable and verifiable
 function parseConfig(raw: string): Result<Config, ParseError> { /* ... */ }
 function validateConfig(config: Config): Result<ValidConfig, ValidationError[]> { /* ... */ }
@@ -364,16 +500,16 @@ function loadAndApplyConfig(path: string): void { /* 200 lines */ }
 
 Reduce the search space for agents (and humans). Consistent patterns mean less context needed per decision.
 
-- Consistent file naming: `UserService.ts`, `UserService.test.ts`, `UserService.types.ts`
-- Predictable directory structure across features
-- Standard patterns for CRUD operations, API endpoints, error handling
-- If your project has a pattern, follow it. If it doesn't, establish one and document it
+* Consistent file naming: `UserService.ts`, `UserService.test.ts`, `UserService.types.ts`
+* Predictable directory structure across features
+* Standard patterns for CRUD operations, API endpoints, error handling
+* If your project has a pattern, follow it. If it doesn't, establish one and document it
 
 ### Contract-First Design
 
 Define types before implementation. Types are the cheapest, most scannable form of documentation. An agent reading your types understands your system's data flow without reading a single function body.
 
-```typescript
+```
 // Define the contract first
 interface OrderService {
   create(data: CreateOrderInput): Promise<Result<Order, CreateOrderError>>;
@@ -388,7 +524,7 @@ interface OrderService {
 
 Every mutation should produce structured output describing what changed. This enables agents to verify their actions and enables humans to audit.
 
-```typescript
+```
 type MutationResult<T> = {
   data: T;
   changes: Change[];  // What was modified
@@ -403,28 +539,178 @@ async function updateUserProfile(
 }
 ```
 
-### Token-Efficient APIs
+### Context Optimisation & Token Economics
 
-Design functions that return focused summaries with drill-down references, not data dumps.
+> Every token an agent reads is a token it can't use for reasoning. Treat context like memory in an embedded system — budget it, measure it, and refuse to waste it.
+
+#### The Context Budget
+
+AI agents operate within fixed context windows. Your code, documentation, error messages, and tool outputs all compete for the same finite space. Code that is token-efficient isn't just neat — it directly improves agent reasoning quality.
+
+```
+Context Window (finite)
+├── System prompt & instructions     ~2-5k tokens (fixed cost)
+├── Conversation history             ~variable
+├── Tool definitions                 ~1-10k tokens (per tool schema)
+├── Retrieved code / docs            ~variable ← YOU CONTROL THIS
+├── Agent reasoning                  ~variable ← THIS GETS SQUEEZED
+└── Output generation                ~variable ← AND SO DOES THIS
+
+The more tokens your code consumes, the less room the agent 
+has to think. Optimise ruthlessly.
+```
+
+#### Semantic Compression
+
+Collapse granular interfaces into high-level semantic operations. Instead of exposing every low-level action, expose intent-based APIs.
 
 ```typescript
-// ✅ Summary with references for drill-down
-function getUserActivitySummary(userId: string, limit = 100): ActivitySummary {
+// ❌ 15 granular tools = ~15k tokens of schema
+// An agent must read and reason about ALL of them
+tools: [
+  createFile, readFile, deleteFile, moveFile, copyFile,
+  listDirectory, createDirectory, deleteDirectory,
+  getFileMetadata, setFilePermissions, watchFile,
+  compressFile, decompressFile, hashFile, diffFiles
+]
+
+// ✅ 1 semantic dispatcher = ~1k tokens of schema
+// Agent reasons about intent, not mechanics
+tools: [{
+  name: "filesystem",
+  description: "Manage files and directories",
+  parameters: {
+    operation: "create | read | delete | move | copy | list | ...",
+    path: "string",
+    options: "object (operation-specific)"
+  }
+}]
+```
+
+This is the dispatcher pattern: consolidate related tools behind a single entry point that routes by intent. Token cost drops dramatically while functionality stays the same.
+
+#### Layered Context Loading
+
+Don't front-load everything. Provide summaries first, with drill-down paths for when the agent actually needs more detail.
+
+```typescript
+// ✅ Layered: summary first, details on demand
+function getProjectOverview(): ProjectSummary {
   return {
-    totalEvents: 1247,
-    recentEvents: getRecentEvents(userId, 10),
-    eventIdsByType: groupEventIds(userId),
-    // Use getActivityDetails(eventId) for specifics
+    name: "DataPipeline",
+    modules: ["ingestion", "transform", "export"],
+    entryPoint: "src/main.ts",
+    recentChanges: getRecentChangeSummary(5),
+    // Drill-down references — agent only loads what it needs
+    getModuleDetail: (name: string) => loadModuleContext(name),
+    getFileContent: (path: string) => loadFileContext(path),
   };
 }
 
-// ❌ Returns everything — wastes tokens and memory
-function getUserActivity(userId: string): Activity[] {
-  return getAllEvents(userId); // Thousands of events
+// ❌ Eager: dumps everything into context upfront
+function getProjectContext(): FullProjectDump {
+  return {
+    allFiles: readAllFiles(),          // 50k tokens
+    allTests: readAllTests(),          // 30k tokens
+    allDocs: readAllDocs(),            // 20k tokens
+    // Agent's context window is now full before it starts thinking
+  };
 }
 ```
 
-Support pagination (`limit`, `offset`) on any function that could return large result sets.
+#### Token-Aware Documentation
+
+Write documentation that serves both human readers and token budgets. Every word should earn its place.
+
+```markdown
+# ❌ Token-heavy: narrative style, repetitive, verbose
+## Overview of the Authentication Module
+The authentication module is responsible for handling all aspects of user 
+authentication within our application. This module was designed with security 
+best practices in mind and implements industry-standard protocols. The module 
+handles user login, token generation, session management, and token refresh 
+functionality. It is important to note that this module uses JWT tokens for 
+authentication purposes.
+(~80 tokens to say what could be said in 15)
+
+# ✅ Token-efficient: dense, scannable, no filler
+## Authentication
+JWT-based auth with refresh token rotation.
+- Entry: `authenticate()` → `Result<Session, AuthError>`  
+- Tokens: 15min access, 7d refresh (HTTP-only cookie)
+- Storage: PostgreSQL users, Redis token blacklist
+(~40 tokens, more information conveyed)
+```
+
+#### Structured Output for Agent Consumption
+
+When building tools or functions that agents will consume, prefer structured, parseable output over human-readable prose.
+
+```typescript
+// ✅ Agent-friendly: structured, parseable, minimal
+type BuildResult = {
+  success: boolean;
+  errors: { file: string; line: number; code: string; message: string }[];
+  warnings: { file: string; line: number; code: string; message: string }[];
+  stats: { duration_ms: number; filesProcessed: number };
+};
+
+// ❌ Human-only: requires parsing natural language
+function getBuildOutput(): string {
+  return `Build completed with 2 errors and 1 warning.
+    Error in src/auth.ts line 42: Type 'string' is not assignable...
+    Error in src/orders.ts line 18: Property 'id' does not exist...
+    Warning in src/utils.ts line 7: Unused variable 'temp'...
+    Build took 3.2 seconds, processed 47 files.`;
+}
+```
+
+#### Context Boundaries as Architecture
+
+Design modules so an agent can work within one module without loading others. Each module should be a self-contained context unit.
+
+```typescript
+// ✅ Clean context boundary — agent only needs this module
+// payments/index.ts
+export interface PaymentService {
+  charge(input: ChargeInput): Promise<Result<Payment, PaymentError>>;
+  refund(id: PaymentId, reason: RefundReason): Promise<Result<Refund, RefundError>>;
+}
+
+// payments/types.ts — all types co-located, no external dependencies
+export type ChargeInput = {
+  amount: Money;
+  method: PaymentMethod;
+  idempotencyKey: string;  // Agent-friendly: built-in retry safety
+};
+
+// payments/errors.ts — exhaustive, machine-readable
+export type PaymentError =
+  | { code: 'INSUFFICIENT_FUNDS'; available: Money }
+  | { code: 'CARD_DECLINED'; reason: string; retryable: false }
+  | { code: 'GATEWAY_TIMEOUT'; retryable: true };
+```
+
+```
+// ❌ Leaky context boundary — agent must load 4 modules to understand 1
+// payments/index.ts
+import { User } from '../users/types';
+import { Order } from '../orders/types';
+import { AuditLogger } from '../audit/logger';
+import { ConfigManager } from '../config/manager';
+// Agent now needs context from users/, orders/, audit/, config/
+```
+
+#### Compression Strategies Reference
+
+| Strategy | Before | After | Savings |
+|----------|--------|-------|---------|
+| Semantic dispatchers | N tool schemas (~N × 1k tokens) | 1 dispatcher (~1k tokens) | ~(N-1)k tokens |
+| Layered loading | Full dump (50k tokens) | Summary + drill-down (2k + on-demand) | ~48k idle tokens |
+| Dense docs | Narrative prose (~80 tokens/concept) | Structured bullets (~40 tokens/concept) | ~50% |
+| Co-located types | Scattered across modules | Single `types.ts` per module | Fewer file loads |
+| Summary-first returns | Full object graphs | Summary + reference IDs | 60-90% per call |
+| Discriminated unions | Generic error + message string | Typed union with `code` field | Eliminates parsing |
 
 ## Project Navigation
 
@@ -432,7 +718,7 @@ Support pagination (`limit`, `offset`) on any function that could return large r
 
 Every project needs a navigation file. List entry points, patterns, and common tasks.
 
-```markdown
+```
 # Project: Data Processing Pipeline
 
 ## Entry Points
@@ -456,7 +742,7 @@ Keep under 200 lines. Update when architecture changes.
 
 Every major directory gets a README answering: What is this? How does it work? What are the gotchas?
 
-```markdown
+```
 # Module: User Authentication
 
 ## Purpose
@@ -483,31 +769,40 @@ JWT-based authentication with refresh token rotation
 
 ## Anti-Patterns
 
-- **Premature optimization** — Measure first, optimize second
-- **Hasty abstractions** — Wait for 3rd duplication before extracting
-- **Clever code** — Simple and obvious beats clever and compact
-- **Silent failures** — Log and propagate, never swallow
-- **Vague interfaces** — `process(data: any): any` provides zero guidance
-- **Hidden dependencies** — Global state, singletons, ambient imports
-- **Nested conditionals** — Use guard clauses instead
-- **Comments describing "what"** — If you need a comment to explain what code does, rename things
-- **Premature generalization** — Build for today's requirements, not hypothetical futures
-- **Token bloat** — Functions returning everything when callers need summaries
+* **Premature optimization** — Measure first, optimize second
+* **Hasty abstractions** — Wait for 3rd duplication before extracting
+* **Clever code** — Simple and obvious beats clever and compact
+* **Silent failures** — Log and propagate, never swallow
+* **Vague interfaces** — `process(data: any): any` provides zero guidance
+* **Hidden dependencies** — Global state, singletons, ambient imports
+* **Nested conditionals** — Use guard clauses instead
+* **Comments describing "what"** — If you need a comment to explain what code does, rename things
+* **Premature generalization** — Build for today's requirements, not hypothetical futures
+* **Token bloat** — Functions returning everything when callers need summaries
+* **Inverted disclosure** — Helpers at top, public API buried at bottom
+* **Flat files** — 500-line files with no visual hierarchy, grouping, or section comments
+* **Leaky context boundaries** — Modules that import heavily from siblings, forcing agents to load the entire codebase
+* **Eager context loading** — Dumping full project state into agent context when a summary would suffice
 
 ## Checklist
 
 Before submitting code:
 
-- [ ] Solves the stated problem with minimal code?
-- [ ] A new developer can understand it without extensive context?
-- [ ] Errors handled with actionable messages?
-- [ ] Names clear, specific, and unambiguous?
-- [ ] Functions have single, clear responsibilities?
-- [ ] Dependencies explicit (no hidden global state)?
-- [ ] Tests cover critical paths?
-- [ ] Operations idempotent where applicable?
-- [ ] Types define contracts before implementation?
-- [ ] Would this work well with ~200 lines of surrounding context?
+* Solves the stated problem with minimal code?
+* A new developer can understand it without extensive context?
+* Errors handled with actionable messages?
+* Names clear, specific, and unambiguous?
+* Functions have single, clear responsibilities?
+* Dependencies explicit (no hidden global state)?
+* Tests cover critical paths?
+* Operations idempotent where applicable?
+* Types define contracts before implementation?
+* Would this work well with ~200 lines of surrounding context?
+* Can an agent understand this module without loading adjacent modules?
+* Are public APIs scannable in under 50 lines?
+* Do tool/function outputs use structured types, not prose?
+* Is documentation token-dense (no filler words, no repetition)?
+* Does the file follow progressive disclosure (types → public API → helpers)?
 
 ---
 
