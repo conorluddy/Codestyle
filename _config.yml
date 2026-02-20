@@ -1,0 +1,11 @@
+title: Codestyle
+description: Code style guidelines optimized for human cognition and AI collaboration
+remote_theme: just-the-docs/just-the-docs
+
+color_scheme: dark
+
+exclude:
+  - CLAUDE.md
+  - LICENSE
+  - Gemfile
+  - Gemfile.lock
