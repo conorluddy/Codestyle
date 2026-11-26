@@ -1,4 +1,4 @@
-(See CLAUDE.md for sharper context-saving alternative)
+(See AGENTS.md for the tighter context-saving version I use in projects)
 
 # Code Style Guide
 
